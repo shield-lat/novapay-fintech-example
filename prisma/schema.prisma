@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+  binaryTargets = ["native", "rhel-openssl-3.0.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+// 1. Núcleo Administrativo y SaaS
+
+model Company {
+  id               String   @id @default(uuid())
+  legalName        String   @map("legal_name")
+  taxId            String   @unique @map("tax_id")
+  subscriptionTier String   @default("Starter") @map("subscription_tier") // Starter, Pro, Enterprise
+  industrySector   String   @map("industry_sector")
+  riskProfile      String   @default("Medium") @map("risk_profile")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  users             User[]
+  billing           Billing?
+  linkedAccounts    LinkedAccount[]
+  invoicesAR        InvoiceAR[]
+  invoicesAP        InvoiceAP[]
+  cashflowForecasts CashflowForecast[]
+  treasuryRules     TreasuryRule?
+  investments       Investment[]
+
+  @@map("companies")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  companyId   String   @map("company_id")
+  role        String // CFO, Accountant, Auditor
+  permissions String[]
+  email       String   @unique
+  name        String
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("users")
+}
+
+model Billing {
+  id        String   @id @default(uuid())
+  companyId String   @unique @map("company_id")
+  mrrAmount Decimal  @map("mrr_amount") @db.Decimal(10, 2)
+  extraFees Decimal  @default(0) @map("extra_fees") @db.Decimal(10, 2)
+  status    String   @default("Active")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("billing")
+}
+
+// 2. Conectividad Financiera
+
+model LinkedAccount {
+  id             String   @id @default(uuid())
+  companyId      String   @map("company_id")
+  bankName       String   @map("bank_name")
+  accountType    String   @map("account_type") // Checking, Savings
+  currentBalance Decimal  @map("current_balance") @db.Decimal(15, 2)
+  currency       String   @default("USD")
+  accessToken    String   @map("access_token") // Encrypted in app logic usually
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company      Company       @relation(fields: [companyId], references: [id])
+  transactions Transaction[]
+
+  @@map("linked_accounts")
+}
+
+model Transaction {
+  id              String   @id @default(uuid())
+  accountId       String   @map("account_id")
+  amount          Decimal  @db.Decimal(15, 2)
+  direction       String // Credit, Debit
+  category        String // Payroll, Suppliers, Tax, etc.
+  transactionDate DateTime @map("transaction_date")
+  merchantName    String   @map("merchant_name")
+  description     String?
+  status          String   @default("Posted") // Pending, Posted
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  account LinkedAccount @relation(fields: [accountId], references: [id])
+
+  // Relations for reconciliation (Optional)
+  invoiceAR   InvoiceAR? @relation(fields: [invoiceARId], references: [id])
+  invoiceARId String?    @map("invoice_ar_id")
+
+  invoiceAP   InvoiceAP? @relation(fields: [invoiceAPId], references: [id])
+  invoiceAPId String?    @map("invoice_ap_id")
+
+  @@map("transactions")
+}
+
+// 3. Módulo "NovaFlow Core" (IA Predictiva y Operativa)
+
+model InvoiceAP {
+  id                   String    @id @default(uuid())
+  companyId            String    @map("company_id")
+  vendorName           String    @map("vendor_name")
+  dueDate              DateTime  @map("due_date")
+  predictedPaymentDate DateTime? @map("predicted_payment_date")
+  amount               Decimal   @db.Decimal(15, 2)
+  status               String // Pending, Scheduled, Paid
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  company      Company       @relation(fields: [companyId], references: [id])
+  transactions Transaction[]
+
+  @@map("invoices_ap")
+}
+
+model InvoiceAR {
+  id                 String   @id @default(uuid())
+  companyId          String   @map("company_id")
+  customerName       String   @map("customer_name")
+  amount             Decimal  @db.Decimal(15, 2)
+  dueDate            DateTime @map("due_date")
+  paymentProbability Float    @map("payment_probability") // 0-100
+  collectionStage    String   @default("Email 1") @map("collection_stage") // Email 1, Call, Legal
+  status             String // Outstanding, Paid, Overdue
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company       Company        @relation(fields: [companyId], references: [id])
+  transactions  Transaction[]
+  factoringLoan FactoringLoan?
+
+  @@map("invoices_ar")
+}
+
+model CashflowForecast {
+  id               String   @id @default(uuid())
+  companyId        String   @map("company_id")
+  forecastDate     DateTime @map("forecast_date")
+  predictedBalance Decimal  @map("predicted_balance") @db.Decimal(15, 2)
+  confidenceLow    Decimal  @map("confidence_low") @db.Decimal(15, 2)
+  confidenceHigh   Decimal  @map("confidence_high") @db.Decimal(15, 2)
+  scenario         String   @default("Neutral") // Optimistic, Pessimistic, Neutral
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("cashflow_forecasts")
+}
+
+// 4. Tesorería Autónoma
+
+model TreasuryRule {
+  id                      String   @id @default(uuid())
+  companyId               String   @unique @map("company_id")
+  minOperatingCash        Decimal  @map("min_operating_cash") @db.Decimal(15, 2)
+  investmentRiskTolerance String   @map("investment_risk_tolerance") // Low, Medium, High
+  autoInvestEnabled       Boolean  @default(false) @map("auto_invest_enabled")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("treasury_rules")
+}
+
+model Investment {
+  id             String    @id @default(uuid())
+  companyId      String    @map("company_id")
+  fundId         String    @map("fund_id")
+  amountInvested Decimal   @map("amount_invested") @db.Decimal(15, 2)
+  yieldRate      Float     @map("yield_rate") // Annual percentage
+  startDate      DateTime  @default(now()) @map("start_date")
+  maturityDate   DateTime? @map("maturity_date")
+  status         String    @default("Active") // Active, Liquidated
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("investments")
+}
+
+model FactoringLoan {
+  id          String    @id @default(uuid())
+  invoiceId   String    @unique @map("invoice_id")
+  loanAmount  Decimal   @map("loan_amount") @db.Decimal(15, 2)
+  feeCharged  Decimal   @map("fee_charged") @db.Decimal(10, 2)
+  status      String // Disbursed, Repaid
+  disbursedAt DateTime  @default(now()) @map("disbursed_at")
+  repaidAt    DateTime? @map("repaid_at")
+
+  invoice InvoiceAR @relation(fields: [invoiceId], references: [id])
+
+  @@map("factoring_loans")
+}
+
+// 5. Datos No Estructurados y Vectores
+
+model DocumentEmbedding {
+  id         String   @id @default(uuid())
+  sourceId   String   @map("source_id") // Reference to file/email ID
+  sourceType String   @map("source_type") // PDF, Email, Contract
+  content    String   @map("chunk_text")
+  // Field for vector data - mapped to vector type in DB
+  // Using Unsupported type to work with pgvector which isn't fully native in Prisma types yet without extensions preview
+  embedding  Unsupported("vector(1536)")?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("document_embeddings")
+}
+
+model InteractionLog {
+  id           String   @id @default(uuid())
+  userId       String?  @map("user_id") // Optional
+  prompt       String
+  aiResponse   String   @map("ai_response")
+  userFeedback String?  @map("user_feedback") // Thumbs up/down or text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("interaction_logs")
+}

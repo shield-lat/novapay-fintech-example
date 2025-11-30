@@ -21,7 +21,7 @@ const SUGGESTIONS = [
 export default function Chatbot() {
   const { data: session } = useSession();
   const [isOpen, setIsOpen] = useState(false);
-  const [isSafetyMode, setIsSafetyMode] = useState(false); // Desactivado por defecto para probar la funcionalidad RAG primero
+  const [isSafetyMode, setIsSafetyMode] = useState(true); // Activado por defecto
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
@@ -51,17 +51,22 @@ export default function Chatbot() {
     setStatusMessage("");
 
     try {
-      // --- STEP 1: GUARDRAIL (QUESTION) - Optional ---
+      // --- STEP 1: GUARDRAIL (QUESTION) - Auditoría de Entrada ---
       if (isSafetyMode) {
-        setStatusMessage("Analizando seguridad...");
+        setStatusMessage("Verificando seguridad...");
         const guardReq = await fetch("/api/guardrail", {
           method: "POST",
-          body: JSON.stringify({ text: userMessage, type: "question" }),
+          body: JSON.stringify({ 
+              text: userMessage, 
+              type: "question",
+              userId: session?.user?.email 
+          }),
         });
         const guardRes = await guardReq.json();
 
         if (!guardRes.approved) {
-            throw new Error(guardRes.reason || "Pregunta no segura");
+            // Si Shield rechaza, lanzamos error con el mensaje sutil
+            throw new Error(guardRes.reason);
         }
       }
 
@@ -87,17 +92,30 @@ export default function Chatbot() {
       const chatRes = await chatReq.json();
       const aiResponse = chatRes.response;
 
-      // --- STEP 3: GUARDRAIL (ANSWER) - Optional ---
+      // --- STEP 3: GUARDRAIL (ANSWER) - Auditoría de Salida ---
       if (isSafetyMode) {
-        setStatusMessage("Verificando respuesta...");
-        // ... lógica de guardrail de respuesta ...
+        setStatusMessage("Auditando respuesta...");
+        const guardReq = await fetch("/api/guardrail", {
+            method: "POST",
+            body: JSON.stringify({ 
+                text: aiResponse, 
+                type: "answer",
+                userId: session?.user?.email 
+            }),
+        });
+        const guardRes = await guardReq.json();
+
+        if (!guardRes.approved) {
+             // Si Shield rechaza la respuesta de la IA, no la mostramos
+             throw new Error(guardRes.reason);
+        }
       }
 
       // --- STEP 4: DISPLAY ANSWER ---
       setMessages((prev) => [...prev, { role: "assistant", content: aiResponse }]);
 
     } catch (error: any) {
-      console.error("Error in chat flow:", error);
+      console.error("Chat Flow Interrupted:", error);
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: error.message || "Lo siento, no pude procesar tu solicitud en este momento." },

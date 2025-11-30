@@ -1,74 +1,100 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+// Shield Core Config
+const SHIELD_URL = process.env.SHIELD_API_URL || "https://core.shield.lat";
+const SHIELD_API_KEY = process.env.SHIELD_API_KEY;
 
 export async function POST(req: Request) {
   try {
-    const { text, type } = await req.json();
+    const body = await req.json();
+    const { text, type, userId } = body;
     
-    if (!process.env.GEMINI_API_KEY) {
+    // Payload completo para Shield Core API
+    const payload = {
+      action_type: type === "question" ? "user_query" : "bot_response",
+      cot_trace: "",
+      input: text,
+      model_name: "gemini-2.5-flash",
+      payload: JSON.stringify({ 
+        interaction_stage: type, 
+        source: "novapay_landing",
+        context: "fintech_chatbot"
+      }),
+      user_id: userId || "anonymous_user"
+    };
+
+    let shieldData;
+    try {
+      const isQuestion = type === "question";
+      console.log(`\n${"=".repeat(60)}`);
+      console.log(`📤 GUARDRAIL ${isQuestion ? "INPUT (PREGUNTA)" : "OUTPUT (RESPUESTA)"}`);
+      console.log(`${"=".repeat(60)}`);
+      console.log("   Texto:", text.substring(0, 100) + (text.length > 100 ? "..." : ""));
+      console.log("   Action Type:", payload.action_type);
+      console.log("   User:", userId || "anonymous");
+      
+      // Intentamos contactar a Shield Core
+      const shieldReq = await fetch(`${SHIELD_URL}/v1/evaluate`, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${SHIELD_API_KEY}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      console.log("📥 Shield Response:", shieldReq.status);
+      
+      if (!shieldReq.ok) {
+        // Intentar leer el body del error
+        const errorBody = await shieldReq.text();
+        console.log("❌ Shield Error Body:", errorBody);
+        throw new Error(`Shield API Error: ${shieldReq.status} - ${errorBody}`);
+      }
+      
+      shieldData = await shieldReq.json();
+      console.log("✅ Shield Core Response:", JSON.stringify(shieldData, null, 2));
+
+    } catch (connectionError) {
+      // === REGLA FAIL-OPEN ===
+      // Si Shield está apagado o da error, dejamos PASAR el mensaje.
+      console.warn("⚠️ Shield Core no disponible. Aplicando Bypass de Seguridad (Fail-Open).", connectionError);
+      
       return NextResponse.json({ 
-        score: 1, 
         approved: true, 
-        reason: "API Key not configured, bypassing guardrail" 
+        reason: "Verificación omitida temporalmente (Servicio no disponible)",
+        _meta: { bypass: true }
       });
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    let prompt = "";
-    if (type === "question") {
-      prompt = `
-        Evalúa la siguiente pregunta del usuario para un chatbot de una Fintech B2B llamada NovaPay.
-        La pregunta debe ser sobre: Finanzas, Tesorería, NovaPay, Precios, Tecnología, Soporte, o saludos generales.
-        
-        Pregunta: "${text}"
-        
-        Devuelve un JSON con este formato exacto:
-        {
-          "score": (número entre 0 y 1, donde 1 es muy relevante/seguro y 0 es irrelevante/inseguro),
-          "approved": (boolean, true si score > 0.7),
-          "reason": (string breve explicando la decisión en español)
+    // Si Shield respondió, respetamos su decisión
+    // Respuesta Shield: { safe: boolean, decision: string, risk_tier: string, reasons: string[] }
+    const isApproved = shieldData.safe === true;
+    
+    // Mensajes sutiles para el usuario en caso de bloqueo
+    let userReason = "";
+    if (!isApproved) {
+        if (type === "question") {
+            userReason = "Lo siento, no puedo procesar esa consulta específica debido a mis protocolos de seguridad.";
+        } else {
+            userReason = "Lo siento, no puedo mostrar esta respuesta porque contiene información no verificada.";
         }
-      `;
-    } else {
-      prompt = `
-        Evalúa la siguiente respuesta generada por un chatbot para un usuario.
-        La respuesta debe ser: Segura, Profesional, No ofensiva, y no debe alucinar hechos peligrosos.
-        
-        Respuesta: "${text}"
-        
-        Devuelve un JSON con este formato exacto:
-        {
-          "score": (número entre 0 y 1),
-          "approved": (boolean, true si score > 0.8),
-          "reason": (string breve explicando la decisión en español)
-        }
-      `;
     }
 
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
+    return NextResponse.json({ 
+      approved: isApproved, 
+      reason: userReason,
+      _meta: { 
+        decision: shieldData.decision,
+        risk_tier: shieldData.risk_tier, 
+        reasons: shieldData.reasons,
+        action_id: shieldData.action_id
       }
     });
 
-    const responseText = result.response.text();
-    const evaluation = JSON.parse(responseText);
-
-    return NextResponse.json(evaluation);
-
-  } catch (error) {
-    console.error("Guardrail Error:", error);
-    // Fail safe: if error, allow but log (or block depending on policy)
-    // Here we block to show the guardrail is working if API key fails
-    return NextResponse.json({ 
-      score: 0, 
-      approved: false, 
-      reason: "Error en el sistema de seguridad. Intenta de nuevo." 
-    }, { status: 500 });
+  } catch (error: any) {
+    console.error("Critical Guardrail Error:", error);
+    // En caso de error grave en NUESTRO código (ej. JSON malformado), también aplicamos Fail-Open
+    return NextResponse.json({ approved: true, reason: "Internal Bypass" });
   }
 }
-

@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { MessageCircle, X, Send, Bot, Shield, ShieldCheck, ShieldAlert } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from 'react-markdown';
+import { useSession } from "next-auth/react";
 
 type Message = {
   role: "user" | "assistant";
@@ -18,6 +19,7 @@ const SUGGESTIONS = [
 ];
 
 export default function Chatbot() {
+  const { data: session } = useSession();
   const [isOpen, setIsOpen] = useState(false);
   const [isSafetyMode, setIsSafetyMode] = useState(false); // Desactivado por defecto para probar la funcionalidad RAG primero
   const [messages, setMessages] = useState<Message[]>([
@@ -69,7 +71,15 @@ export default function Chatbot() {
       const chatReq = await fetch("/api/chat", {
         method: "POST",
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage }),
+        body: JSON.stringify({ 
+          message: userMessage,
+          userContext: session ? {
+            name: session.user.name,
+            role: session.user.role,
+            companyName: session.user.companyName,
+            companyId: session.user.companyId
+          } : null
+        }),
       });
 
       if (!chatReq.ok) throw new Error("Error en el servidor");

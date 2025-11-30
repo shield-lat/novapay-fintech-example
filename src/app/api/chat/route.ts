@@ -20,17 +20,23 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { message } = body;
+    const { message, userContext } = body;
 
     if (!message) {
       return NextResponse.json({ error: "Mensaje vacío" }, { status: 400 });
     }
 
     console.log("Procesando mensaje:", message);
+    console.log("Usuario:", userContext?.name || "Anónimo");
 
     // 1. Obtener Contexto de Datos
     let contextData = "";
     const lowerMsg = message.toLowerCase();
+    
+    // Agregar contexto del usuario si está autenticado
+    if (userContext) {
+      contextData += `USUARIO ACTUAL: ${userContext.name} (${userContext.role}) de ${userContext.companyName}\n`;
+    }
 
     try {
       // Siempre traer resumen financiero
@@ -64,10 +70,17 @@ export async function POST(req: Request) {
 
     const systemPrompt = `
       Eres "NovaBot", analista financiero de NovaPay.
-      DATOS: ${contextData}
+      ${userContext ? `Estás hablando con ${userContext.name}, quien es ${userContext.role} de ${userContext.companyName}.` : ''}
+      
+      DATOS FINANCIEROS: ${contextData}
       
       Pregunta: "${message}"
-      Responde en Español, profesional y breve. Usa los datos si aplican.
+      
+      Instrucciones:
+      - Responde en Español, de forma profesional y concisa
+      - ${userContext ? `Dirígete al usuario por su nombre (${userContext.name.split(' ')[0]})` : 'Sé cortés'}
+      - Usa los datos financieros para dar respuestas precisas
+      - Si no tienes datos específicos, explica qué necesitarías saber
     `;
 
     const result = await model.generateContent(systemPrompt);

@@ -1,10 +1,12 @@
 "use client";
 import Link from "next/link";
-import { Menu, X } from "lucide-react";
+import { Menu, X, User } from "lucide-react";
 import { useState } from "react";
+import { useSession, signOut } from "next-auth/react";
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
+  const { data: session } = useSession();
 
   return (
     <nav className="bg-white/80 backdrop-blur-md sticky top-0 z-50 border-b border-gray-100">
@@ -25,9 +27,26 @@ export default function Navbar() {
             <Link href="#about" className="text-gray-600 hover:text-blue-600 transition-colors">
               Nosotros
             </Link>
-            <button className="bg-blue-600 text-white px-4 py-2 rounded-full font-medium hover:bg-blue-700 transition-colors">
-              Comenzar
-            </button>
+            {session ? (
+              <>
+                <Link href="/dashboard" className="text-gray-600 hover:text-blue-600 transition-colors flex items-center gap-2">
+                  <User className="h-4 w-4" />
+                  Dashboard
+                </Link>
+                <button 
+                  onClick={() => signOut({ callbackUrl: "/" })}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-full font-medium hover:bg-gray-300 transition-colors"
+                >
+                  Salir
+                </button>
+              </>
+            ) : (
+              <Link href="/login">
+                <button className="bg-blue-600 text-white px-4 py-2 rounded-full font-medium hover:bg-blue-700 transition-colors">
+                  Iniciar Sesión
+                </button>
+              </Link>
+            )}
           </div>
           <div className="flex items-center md:hidden">
             <button
@@ -65,9 +84,35 @@ export default function Navbar() {
             >
               Nosotros
             </Link>
-            <button className="w-full text-left px-3 py-2 text-blue-600 font-medium hover:bg-blue-50 rounded-md">
-              Comenzar
-            </button>
+            {session ? (
+              <>
+                <Link
+                  href="/dashboard"
+                  className="block px-3 py-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-md"
+                  onClick={() => setIsOpen(false)}
+                >
+                  Dashboard
+                </Link>
+                <button 
+                  onClick={() => {
+                    signOut({ callbackUrl: "/" });
+                    setIsOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 text-red-600 font-medium hover:bg-red-50 rounded-md"
+                >
+                  Salir
+                </button>
+              </>
+            ) : (
+              <Link href="/login">
+                <button 
+                  className="w-full text-left px-3 py-2 text-blue-600 font-medium hover:bg-blue-50 rounded-md"
+                  onClick={() => setIsOpen(false)}
+                >
+                  Iniciar Sesión
+                </button>
+              </Link>
+            )}
           </div>
         </div>
       )}
